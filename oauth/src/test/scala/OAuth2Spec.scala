@@ -22,10 +22,12 @@ object OAuth2Spec extends Specification with unfiltered.spec.jetty.Served {
   
   def setup = { server =>
     val source = new AuthSource {
-      def authenticateToken[T](access_token: String, request: HttpRequest[T]): Either[String, UserLike] = access_token match {
-        case "good_token" => Right(new User("test_user"))
-        case _ => Left("bad token")
-      }
+      def authenticateToken[T](access_token: AuthenticationMethod, request: HttpRequest[T]): Either[String, UserLike] =
+        access_token match {
+          case BearerAuth("good_token")          => Right(new User("test_user"))
+          case MacAuth("good_token", _, _, _, _) => Right(new User("test_user"))
+          case _ => Left("bad token")
+        }
 
       override def realm: Option[String] = Some("Mock Source")
     }
@@ -37,11 +39,25 @@ object OAuth2Spec extends Specification with unfiltered.spec.jetty.Served {
   }
 
   "oauth 2" should {
-    "authenticate valid access token" in {
-      val http = new Http
+    "authenticate a valid access token via query parameter" in {  
       val oauth_token = Map("oauth_token" -> "good_token")
-      val user = http(host / "user" <<? oauth_token as_str)
-      user must_=="test_user"
+      Http(host / "user" <<? oauth_token as_str) must_== "test_user"
+    }
+    
+    "authenticate a valid access token via Bearer header" in {
+      val bearer_header = Map("Authorization" -> "Bearer good_token")
+      Http(host / "user" <:< bearer_header as_str) must_== "test_user"      
+    }
+    
+    "fail on a bad Bearer header" in {
+      val bearer_header = Map("Authorization" -> "Bearer bad_token")
+      Http.when(_ == 401)(host / "user" <:< bearer_header as_str) must_== """error="%s" error_description="%s" """.trim.format(
+        "invalid_token", "bad token")    
+    }
+    
+    "authenticate a valid access token via MAC header" in {
+      val mac_header = Map("Authorization" -> """MAC token="good_token",timestamp="x",nonce="x",bodyhash="x",signature="x" """.trim)
+      Http(host / "user" <:< mac_header as_str) must_== "test_user"   
     }
   }
 }
